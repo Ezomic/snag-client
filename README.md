@@ -57,6 +57,12 @@ rotating the salt as resetting every reporter's identity.
 Anywhere in the layout, usually just before `</body>`. It works the same in a Blade app and an
 Inertia one, because both render a Blade layout.
 
+It prints two tags: a short inline script, then the deferred loader. The widget bundle arrives
+after the host app's own scripts have run, so the inline one keeps the uncaught errors and promise
+rejections thrown before it boots (up to fifty) and the widget adds them to the report's console.
+It catches whatever runs after the directive, which includes every deferred and module script,
+wherever `@snag` sits; put it in `<head>` to also catch inline scripts in the body.
+
 It renders nothing at all when the app is not configured, is switched off, or has nobody signed
 in. A report from a reporter nobody can identify cannot be triaged, deduplicated or answered, so
 no button is better than a button that files those.
@@ -81,6 +87,10 @@ connect-src 'self' https://snag.thijssensoftware.nl
 
 `connect-src` has to be named explicitly. Widening `default-src` instead loosens every other
 fetch type at the same time.
+
+The inline script that keeps early errors needs no `'unsafe-inline'` when the app uses Vite's
+nonce (`Vite::useCspNonce()`): it carries the same nonce as the app's own tags. A policy without
+either blocks it, which costs only the errors thrown before the widget booted.
 
 Build it from config rather than pasting the origin into sixteen layouts:
 

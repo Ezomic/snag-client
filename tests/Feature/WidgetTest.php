@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Vite;
+use Symfony\Component\Process\ExecutableFinder;
 use Thijssensoftware\SnagClient\Snag;
 use Thijssensoftware\SnagClient\Widget;
 
@@ -17,7 +20,7 @@ describe('what the widget renders', function () {
 
         $html = (string) Widget::render();
 
-        expect($html)->toStartWith('<script defer ')
+        expect($html)->toContain('<script defer ')
             ->and($html)->toContain('src="https://snag.thijssensoftware.nl/widget.js"')
             ->and($html)->toContain('data-snag-key="billr"');
     });
@@ -124,4 +127,117 @@ describe('when it refuses to render', function () {
         expect((string) Widget::render())->toBe('');
     });
 
+});
+
+/**
+ * Runs the shim the way a browser would, against a window that only knows about listeners, and
+ * returns what the script printed.
+ */
+function runShim(string $afterwards, int $times = 1): string
+{
+    preg_match('/<script[^>]*>(.*?)<\/script>/s', (string) Widget::render(), $match);
+    $shim = str_repeat($match[1]."\n", $times);
+
+    $script = <<<JS
+        const listeners = { error: [], unhandledrejection: [] };
+        const window = {
+            addEventListener: (type, fn) => listeners[type].push(fn),
+            removeEventListener: (type, fn) => { listeners[type] = listeners[type].filter((f) => f !== fn); },
+        };
+        const fire = (type, event) => listeners[type].forEach((fn) => fn(event));
+        {$shim}
+        {$afterwards}
+        JS;
+
+    return trim(Process::run(['node', '-e', $script])->throw()->output());
+}
+
+describe('the pre-boot shim', function () {
+    it('prints the shim ahead of the loader, so it listens before the host app runs', function () {
+        // The loader is deferred and comes from another origin, so the host app's own bundle
+        // can throw before any collector exists. An inline script runs while the page parses.
+        withReporter();
+
+        $html = (string) Widget::render();
+
+        expect($html)->toStartWith('<script>')
+            ->and($html)->toContain('__snagEarly')
+            ->and(strpos($html, '__snagEarly'))->toBeLessThan(strpos($html, '<script defer '));
+    });
+
+    it('carries the CSP nonce when the app has one', function () {
+        withReporter();
+        Vite::useCspNonce('n0nce');
+
+        expect((string) Widget::render())->toStartWith('<script nonce="n0nce">');
+    });
+
+    it('prints no nonce when the app has none', function () {
+        withReporter();
+
+        expect((string) Widget::render())->not->toContain('nonce=');
+    });
+
+    it('escapes the nonce so it cannot break out of the tag', function () {
+        withReporter();
+        Vite::useCspNonce('a" onload="steal()');
+
+        $html = (string) Widget::render();
+
+        expect($html)->not->toContain('onload="steal()')
+            ->and($html)->toContain('&quot;');
+    });
+
+    it('buffers uncaught errors and rejections until the widget takes them over', function () {
+        withReporter();
+
+        $out = runShim(<<<'JS'
+            fire('error', { error: new Error('mount failed'), message: 'Uncaught Error: mount failed' });
+            fire('error', { error: null, message: 'Script error.' });
+            fire('unhandledrejection', { reason: 'no route' });
+            const early = window.__snagEarly;
+            console.log(JSON.stringify(early.events.map((e) => [e.type, String(e.value), typeof e.at])));
+            JS);
+
+        expect(json_decode($out, true))->toBe([
+            ['error', 'Error: mount failed', 'number'],
+            ['error', 'Script error.', 'number'],
+            ['rejection', 'no route', 'number'],
+        ]);
+    })->skip(fn (): bool => (new ExecutableFinder)->find('node') === null, 'node is not installed');
+
+    it('stops listening once the widget says it has taken over', function () {
+        withReporter();
+
+        $out = runShim(<<<'JS'
+            window.__snagEarly.stop();
+            fire('error', { error: new Error('after boot'), message: 'after boot' });
+            console.log(JSON.stringify([window.__snagEarly.events.length, listeners.error.length, listeners.unhandledrejection.length]));
+            JS);
+
+        expect(json_decode($out, true))->toBe([0, 0, 0]);
+    })->skip(fn (): bool => (new ExecutableFinder)->find('node') === null, 'node is not installed');
+
+    it('keeps the first fifty, so a widget that never drains it cannot grow it without bound', function () {
+        withReporter();
+
+        $out = runShim(<<<'JS'
+            for (let i = 0; i < 60; i++) fire('error', { error: null, message: 'error ' + i });
+            const events = window.__snagEarly.events;
+            console.log(JSON.stringify([events.length, events[49].value]));
+            JS);
+
+        expect(json_decode($out, true))->toBe([50, 'error 49']);
+    })->skip(fn (): bool => (new ExecutableFinder)->find('node') === null, 'node is not installed');
+
+    it('leaves the first shim in charge when a page prints two', function () {
+        withReporter();
+
+        // Two @snag directives in one layout, or a layout and a partial that both carry one.
+        $out = runShim(<<<'JS'
+            console.log(JSON.stringify([listeners.error.length, listeners.unhandledrejection.length]));
+            JS, times: 2);
+
+        expect(json_decode($out, true))->toBe([1, 1]);
+    })->skip(fn (): bool => (new ExecutableFinder)->find('node') === null, 'node is not installed');
 });

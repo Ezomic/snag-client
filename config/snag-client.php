@@ -133,4 +133,27 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Request context
+    |--------------------------------------------------------------------------
+    |
+    | After each request this app remembers, for fifteen minutes and in its own
+    | cache, which route and controller action handled it, who was signed in and
+    | how many queries it ran. When a report arrives snag asks for that through
+    | GET /_snag/context/{request id}, authenticated by a bearer derived from
+    | SNAG_SECRET. Nothing is kept longer than that, and nothing is sent anywhere
+    | unprompted.
+    |
+    | The user is always the same pseudonym the widget sends as the reporter,
+    | never the raw id, so a report can be joined to its request without snag
+    | learning who anyone is.
+    |
+    */
+
+    'context' => [
+        'enabled' => env('SNAG_CONTEXT_ENABLED', true),
+        'store' => env('SNAG_CONTEXT_STORE'),
+    ],
+
 ];

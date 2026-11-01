@@ -105,6 +105,17 @@ class Snag
         return hash_hmac('sha256', (string) self::reporterIdentifier(), self::salt());
     }
 
+    public static function reporterReferenceOrNull(): ?string
+    {
+        $identifier = self::reporterIdentifier();
+
+        if ($identifier === null || self::salt() === '') {
+            return null;
+        }
+
+        return hash_hmac('sha256', (string) $identifier, self::salt());
+    }
+
     /**
      * Proves this app vouched for that pseudonym until that moment.
      *

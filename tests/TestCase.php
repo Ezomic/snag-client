@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Thijssensoftware\SnagClient\Tests;
 
 use Illuminate\Foundation\Application;
+use Illuminate\Routing\Router;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Thijssensoftware\RequestId\RequestIdServiceProvider;
 use Thijssensoftware\SnagClient\Snag;
 use Thijssensoftware\SnagClient\SnagClientServiceProvider;
+use Thijssensoftware\SnagClient\Tests\Support\OrdersController;
 
 abstract class TestCase extends Orchestra
 {
@@ -29,6 +31,16 @@ abstract class TestCase extends Orchestra
     }
 
     /**
+     * @param  Router  $router
+     */
+    protected function defineRoutes($router): void
+    {
+        $router->get('/orders/{order}', [OrdersController::class, 'show'])->name('orders.show');
+
+        $router->get('/plain', fn (): string => 'ok');
+    }
+
+    /**
      * A fully configured app, since almost every test is about what happens once it is.
      *
      * @param  Application  $app
@@ -44,6 +56,10 @@ abstract class TestCase extends Orchestra
             'ttl' => 3600,
             'release' => 'a1b2c3d',
             'locale' => null,
+            'context' => [
+                'enabled' => true,
+                'store' => null,
+            ],
         ]);
     }
 }
